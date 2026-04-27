@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>カード一覧</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+
+/* ===== カード一覧 ===== */
+#cards {
+  display: grid;
+  gap: 15px;
+  padding: 15px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 600px) {
+  #cards { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 900px) {
+  #cards { grid-template-columns: repeat(5, 1fr); }
+}
+@media (min-width: 1200px) {
+  #cards { grid-template-columns: repeat(10, 1fr); }
+}
+
+#cards div {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 5px;
+  aspect-ratio: 3/4;
+  overflow: hidden;
+  transition: transform 0.2s ease;
+}
+#cards div:hover {
+  transform: scale(1.1);
+  z-index: 2;
+}
+
+#cards img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ===== 検索UI ===== */
+#search {
+  width: 100%;
+  padding: 10px;
+}
+#filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+}
+
+/* ===== デッキ ===== */
+#deck-area {
+  background: #222;
+  padding: 15px;
+}
+#deck-title {
+  color: white;
+}
+
+#deck-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 80px;
+  gap: 10px;
+  overflow-x: auto;
+}
+
+.deck-card {
+  background: #444;
+  border-radius: 6px;
+  padding: 3px;
+  cursor: grab;
+  text-align: center;
+}
+.deck-card img {
+  width: 100%;
+  aspect-ratio: 3/4;
+  object-fit: cover;
+}
+
+.count {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  color: white;
+}
+
+.count button {
+  padding: 2px 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ===== モーダル ===== */
+#modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.8);
+  display: none;
+  justify-content: center;
+  align-items: center;
+}
+#modal img {
+  max-width: 90%;
+  max-height: 90%;
+}
+</style>
+</head>
+
+<body>
+
+<h1>カード一覧</h1>
+
+<input id="search" placeholder="検索">
+
+<div id="filters">
+  <select id="cardtype"><option value="">全て</option></select>
+  <select id="rarity"><option value="">レアリティ</option></select>
+  <input id="cost-min" type="number" placeholder="コスト最小">
+  <input id="cost-max" type="number" placeholder="コスト最大">
+  <input id="race" placeholder="種族">
+</div>
+
+<div id="deck-area">
+  <div id="deck-title">デッキ</div>
+
+  <input id="deck-name" placeholder="デッキ名">
+  <button onclick="saveCurrentDeck()">保存</button>
+  <button onclick="deleteDeck()">削除</button>
+
+  <select id="deck-select"></select>
+
+  <div id="deck-info" style="color:white; margin:10px 0;"></div>
+
+  <div id="deck-grid"></div>
+</div>
+
+<div id="cards"></div>
+
+<div id="modal">
+  <img id="modal-img">
+</div>
+
+<script>
+let deck = [];
+let decks = {};
+let currentDeck = "";
+let allCards = [];
+
+let draggingIndex = null;
+let isDragging = false;
+
+/* ===== データ読み込み ===== */
+fetch("cards.json")
+.then(res => res.json())
+.then(data => {
+  allCards = data;
+  createOptions(data);
+  renderCards(data);
+  loadAllDecks();
+});
+
+/* ===== グローバルドラッグ ===== */
+document.body.ondragover = e => e.preventDefault();
+
+document.body.ondrop = e=>{
+  if(draggingIndex !== null){
+    deck.splice(draggingIndex,1);
+    draggingIndex = null;
+    autoSave();
+    renderDeck();
+  }
+  isDragging = false;
+};
+
+/* ===== カード一覧 ===== */
+function renderCards(data){
+  const container = document.getElementById("cards");
+  container.innerHTML = "";
+
+  data.forEach(card => {
+    const div = document.createElement("div");
+    const img = document.createElement("img");
+    img.src = card.image;
+
+    div.appendChild(img);
+
+    div.onclick = () => {
+      if(isDragging) return;
+      addToDeck(card);
+      openModal(card.image);
+    };
+
+    container.appendChild(div);
+  });
+}
+
+/* ===== デッキ操作 ===== */
+function addToDeck(card){
+  const exist = deck.find(c => c.id === card.id);
+  if(exist) exist.count++;
+  else deck.push({...card, count:1});
+
+  autoSave();
+  renderDeck();
+}
+
+function removeFromDeck(id){
+  const i = deck.findIndex(c => c.id === id);
+  if(i !== -1){
+    deck[i].count--;
+    if(deck[i].count <= 0) deck.splice(i,1);
+  }
+  autoSave();
+  renderDeck();
+}
+
+/* ===== デッキ描画 ===== */
+function renderDeck(){
+  const grid = document.getElementById("deck-grid");
+  grid.innerHTML = "";
+
+  let total = 0;
+
+  deck.forEach((c,index)=>{
+    total += c.count;
+
+    const d = document.createElement("div");
+    d.className = "deck-card";
+    d.draggable = true;
+
+    const img = document.createElement("img");
+    img.src = c.image;
+
+    const count = document.createElement("div");
+    count.className = "count";
+
+    const minus = document.createElement("button");
+    minus.textContent = "-";
+    minus.onclick = e=>{
+      e.stopPropagation();
+      removeFromDeck(c.id);
+    };
+
+    const num = document.createElement("span");
+    num.textContent = c.count;
+
+    const plus = document.createElement("button");
+    plus.textContent = "+";
+    plus.onclick = e=>{
+      e.stopPropagation();
+      addToDeck(c);
+    };
+
+    count.append(minus, num, plus);
+
+    d.append(img, count);
+
+    d.onclick = ()=> {
+      if(isDragging) return;
+      openModal(c.image);
+    };
+
+    /* ドラッグ開始 */
+    d.ondragstart = e=>{
+      draggingIndex = index;
+      isDragging = true;
+    };
+
+    /* デッキ内並び替え */
+    d.ondragover = e=> e.preventDefault();
+
+    d.ondrop = e=>{
+      e.stopPropagation();
+
+      if(draggingIndex === null) return;
+
+      const from = draggingIndex;
+      const to = index;
+
+      const moved = deck.splice(from,1)[0];
+      deck.splice(to,0,moved);
+
+      draggingIndex = null;
+
+      autoSave();
+      renderDeck();
+    };
+
+    grid.appendChild(d);
+  });
+
+  document.getElementById("deck-info").textContent =
+    "合計枚数: " + total + "枚";
+}
+
+/* ===== 保存 ===== */
+function autoSave(){
+  if(currentDeck){
+    decks[currentDeck] = deck;
+    localStorage.setItem("decks", JSON.stringify(decks));
+  }
+}
+
+function saveCurrentDeck(){
+  const name = document.getElementById("deck-name").value.trim();
+  if(!name){
+    alert("デッキ名を入力してください");
+    return;
+  }
+
+  decks[name] = JSON.parse(JSON.stringify(deck));
+  currentDeck = name;
+
+  localStorage.setItem("decks", JSON.stringify(decks));
+  updateDeckSelect();
+}
+
+function deleteDeck(){
+  if(!currentDeck) return;
+
+  delete decks[currentDeck];
+  deck = [];
+  currentDeck = "";
+
+  localStorage.setItem("decks", JSON.stringify(decks));
+  updateDeckSelect();
+  renderDeck();
+}
+
+function loadAllDecks(){
+  const data = localStorage.getItem("decks");
+  if(data) decks = JSON.parse(data);
+  updateDeckSelect();
+}
+
+function updateDeckSelect(){
+  const select = document.getElementById("deck-select");
+  select.innerHTML = "";
+
+  Object.keys(decks).forEach(name=>{
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = name;
+    select.appendChild(o);
+  });
+
+  select.value = currentDeck;
+}
+
+document.getElementById("deck-select").onchange = e=>{
+  currentDeck = e.target.value;
+  deck = JSON.parse(JSON.stringify(decks[currentDeck] || []));
+  document.getElementById("deck-name").value = currentDeck;
+  renderDeck();
+};
+
+/* ===== フィルター ===== */
+function applyFilters(){
+  const keyword = document.getElementById("search").value.toLowerCase();
+  const minVal = document.getElementById("cost-min").value;
+  const maxVal = document.getElementById("cost-max").value;
+  const race = document.getElementById("race").value.toLowerCase();
+  const rarity = document.getElementById("rarity").value;
+  const type = document.getElementById("cardtype").value;
+
+  const min = minVal === "" ? null : Number(minVal);
+  const max = maxVal === "" ? null : Number(maxVal);
+
+  const result = allCards.filter(c => {
+    return (
+      (!keyword || (
+        (c.name && c.name.toLowerCase().includes(keyword)) ||
+        (c.text1 && c.text1.toLowerCase().includes(keyword)) ||
+        (c.text2 && c.text2.toLowerCase().includes(keyword))
+      )) &&
+      (!rarity || c.rarity === rarity) &&
+      (!type || c.cardtype === type) &&
+      (min === null || c.cost >= min) &&
+      (max === null || c.cost <= max) &&
+      (!race || (c.race && c.race.toLowerCase().includes(race)))
+    );
+  });
+
+  renderCards(result);
+}
+
+document.getElementById("search").oninput = applyFilters;
+document.getElementById("cost-min").oninput = applyFilters;
+document.getElementById("cost-max").oninput = applyFilters;
+document.getElementById("race").oninput = applyFilters;
+document.getElementById("rarity").onchange = applyFilters;
+document.getElementById("cardtype").onchange = applyFilters;
+
+/* ===== セレクト生成 ===== */
+function createOptions(data){
+  const r = new Set();
+  const t = new Set();
+
+  data.forEach(c=>{
+    if(c.rarity) r.add(c.rarity);
+    if(c.cardtype) t.add(c.cardtype);
+  });
+
+  const raritySelect = document.getElementById("rarity");
+  r.forEach(v=>{
+    const o=document.createElement("option");
+    o.value=v; o.textContent=v;
+    raritySelect.appendChild(o);
+  });
+
+  const typeSelect = document.getElementById("cardtype");
+  t.forEach(v=>{
+    const o=document.createElement("option");
+    o.value=v; o.textContent=v;
+    typeSelect.appendChild(o);
+  });
+}
+
+/* ===== モーダル ===== */
+function openModal(src){
+  document.getElementById("modal-img").src = src;
+  document.getElementById("modal").style.display = "flex";
+}
+document.getElementById("modal").onclick = () => {
+  document.getElementById("modal").style.display = "none";
+};
+</script>
+
+</body>
+</html>
